@@ -22,7 +22,6 @@ import models.cifar as models
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 
-
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -74,7 +73,7 @@ parser.add_argument('--compressionRate', type=int, default=2, help='Compression 
 parser.add_argument('--manualSeed', type=int, help='manual seed')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
-#Device options
+# Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
 
@@ -105,8 +104,6 @@ def main():
     if not os.path.isdir(args.checkpoint):
         mkdir_p(args.checkpoint)
 
-
-
     # Data
     print('==> Preparing dataset %s' % args.dataset)
     transform_train = transforms.Compose([
@@ -126,7 +123,6 @@ def main():
     else:
         dataloader = datasets.CIFAR100
         num_classes = 100
-
 
     trainset = dataloader(root='./data', train=True, download=True, transform=transform_train)
     trainloader = data.DataLoader(trainset, batch_size=args.train_batch, shuffle=True, num_workers=args.workers)
@@ -168,11 +164,20 @@ def main():
     else:
         model = models.__dict__[args.arch](num_classes=num_classes)
 
+    # multi-gpu
     model = torch.nn.DataParallel(model).cuda()
+
     cudnn.benchmark = True
+
     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+
+    # Loss
     criterion = nn.CrossEntropyLoss()
+
+    # Optimizer
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    # LR decay scheduler
+    scheduler = optim.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=2, verbose=True)
 
     # Resume
     title = 'cifar-10-' + args.arch
@@ -200,12 +205,18 @@ def main():
 
     # Train and val
     for epoch in range(start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch)
+        # 在特定的epoch调整学习率
+        #adjust_learning_rate(optimizer, epoch)
 
         print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
 
+        # 训练一个epoch
         train_loss, train_acc = train(trainloader, model, criterion, optimizer, epoch, use_cuda)
+        # 测试一个epoch
         test_loss, test_acc = test(testloader, model, criterion, epoch, use_cuda)
+
+        # 调整学习率
+        scheduler.step(test_loss)
 
         # append logger file
         logger.append([state['lr'], train_loss, test_loss, train_acc, test_acc])
@@ -341,12 +352,15 @@ def save_checkpoint(state, is_best, checkpoint='checkpoint', filename='checkpoin
     if is_best:
         shutil.copyfile(filepath, os.path.join(checkpoint, 'model_best.pth.tar'))
 
+"""
+# 我觉得不合理
 def adjust_learning_rate(optimizer, epoch):
     global state
     if epoch in args.schedule:
         state['lr'] *= args.gamma
         for param_group in optimizer.param_groups:
             param_group['lr'] = state['lr']
+"""
 
 if __name__ == '__main__':
     main()
